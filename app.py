@@ -167,17 +167,26 @@ def load_segmentation_model():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(script_dir, 'final_model.keras')
         
+        # Add debug prints
+        print(f"Attempting to load model from: {model_path}")
+        print(f"File exists: {os.path.exists(model_path)}")
+        if os.path.exists(model_path):
+            print(f"File size: {os.path.getsize(model_path)} bytes")
+        
         try:
             model = load_model(model_path, custom_objects=custom_objects)
             return model
         except Exception as e:
             st.error(f"Could not load model from {model_path}")
+            st.error(f"Detailed error: {str(e)}")
+            print(f"Full traceback: {traceback.format_exc()}")  # This will print the full error trace
             return None
             
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
+        print(f"Full traceback: {traceback.format_exc()}")
         return None
-
+        
 def main():
     st.title("Pancreas Segmentation Visualizer")
     
