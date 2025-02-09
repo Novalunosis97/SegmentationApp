@@ -164,6 +164,7 @@ def load_segmentation_model():
             'hausdorff_distance': hausdorff_distance
         }
         
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(script_dir, 'final_model.keras')
         
         try:
