@@ -164,22 +164,15 @@ def load_segmentation_model():
             'hausdorff_distance': hausdorff_distance
         }
         
-        potential_paths = [
-            Path.cwd() / "final_model.keras",
-            Path.home() / "pancreas_nnunet" / "saved_models_pancreas" / "final_model.keras",
-            Path.home() / "saved_models" / "final_model.keras"
-        ]
+        model_path = os.path.join(script_dir, 'final_model.keras')
         
-        for model_path in potential_paths:
-            try:
-                if model_path.exists():
-                    model = load_model(str(model_path), custom_objects=custom_objects)
-                    return model
-            except Exception:
-                continue
-        
-        st.error("Could not load model from any of the potential paths.")
-        return None
+        try:
+            model = load_model(model_path, custom_objects=custom_objects)
+            return model
+        except Exception as e:
+            st.error(f"Could not load model from {model_path}")
+            return None
+            
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         return None
