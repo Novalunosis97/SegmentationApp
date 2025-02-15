@@ -10,7 +10,7 @@ import os
 import traceback
 from skimage.transform import resize
 
-# Custom metrics and loss functions
+# Reuse the existing metrics and loss functions
 def dice_coef(y_true, y_pred, smooth=1):
     y_true_f = tf.reshape(y_true, [-1])
     y_pred_f = tf.reshape(y_pred, [-1])
@@ -51,8 +51,8 @@ def hausdorff_distance(y_true, y_pred):
     
     return tf.reduce_mean(tf.map_fn(lambda x: compute_hd(x[0], x[1]), (y_true, y_pred), fn_output_signature=tf.float32))
 
+# Reuse the helper functions with minor modifications
 TARGET_SHAPE = (256, 256)
-NUM_CLASSES = 2  # vessel, tumor
 
 def normalize_slice(slice):
     min_val = np.min(slice)
@@ -63,14 +63,12 @@ def normalize_slice(slice):
         return slice - min_val
 
 def preprocess_slice(img_slice):
-    """Preprocess a single slice according to model requirements."""
     img_slice = img_slice.astype(np.float32)
     resized_slice = resize(img_slice, TARGET_SHAPE, mode='constant', preserve_range=True)
     normalized_slice = normalize_slice(resized_slice)
     return normalized_slice
 
 def load_medical_image(uploaded_file):
-    """Load DICOM or NIfTI file and return numpy array."""
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_file_path = os.path.join(temp_dir, uploaded_file.name)
@@ -100,61 +98,41 @@ def load_medical_image(uploaded_file):
         return None
 
 def prepare_model_input(volume_data):
-    """
-    Prepare volume data for model prediction with correct input shape
-    
-    Expected input shape: (batch_size, height, width, channels)
-    """
     preprocessed_slices = []
     for i in range(volume_data.shape[0]):
-        # Preprocess slice
         processed_slice = preprocess_slice(volume_data[i])
-        
-        # Add channel dimension and ensure float32
         processed_slice = processed_slice[..., np.newaxis].astype(np.float32)
-        
         preprocessed_slices.append(processed_slice)
-    
-    # Stack slices into a single batch
     return np.array(preprocessed_slices)
 
-def overlay_segmentation(original_slice, vessel_mask, tumor_mask, vessel_alpha=0.4, tumor_alpha=0.4):
-    """
-    Overlay segmentation masks on the original slice with different colors
-    
-    Handles potential size mismatches between original slice and masks
-    """
-    # Resize masks to match original slice if needed
-    if vessel_mask.shape != original_slice.shape:
-        vessel_mask = resize(vessel_mask, original_slice.shape, mode='constant', preserve_range=True)
+def overlay_segmentation_liver(original_slice, liver_mask, tumor_mask, liver_alpha=0.4, tumor_alpha=0.4):
+    """Modified overlay function for liver and tumor segmentation"""
+    if liver_mask.shape != original_slice.shape:
+        liver_mask = resize(liver_mask, original_slice.shape, mode='constant', preserve_range=True)
     
     if tumor_mask.shape != original_slice.shape:
         tumor_mask = resize(tumor_mask, original_slice.shape, mode='constant', preserve_range=True)
     
-    # Normalize original slice for display
     displayed_slice = normalize_slice(original_slice)
-    displayed_slice = np.stack([displayed_slice]*3, axis=-1)  # Convert to RGB
+    displayed_slice = np.stack([displayed_slice]*3, axis=-1)
     
-    # Create color overlays
     overlay = displayed_slice.copy().astype(np.float32)
     
-    # Create binary masks
-    vessel_binary = vessel_mask > 0.5
+    liver_binary = liver_mask > 0.5
     tumor_binary = tumor_mask > 0.5
     
-    # Add color overlays
-    # Pink for vessels
-    overlay[vessel_binary] = (1 - vessel_alpha) * overlay[vessel_binary] + \
-                              vessel_alpha * np.array([1, 0.75, 0.8])
+    # Brown for liver
+    overlay[liver_binary] = (1 - liver_alpha) * overlay[liver_binary] + \
+                           liver_alpha * np.array([0.6, 0.4, 0.2])
     
-    # Green for tumors
+    # Red for tumors
     overlay[tumor_binary] = (1 - tumor_alpha) * overlay[tumor_binary] + \
-                             tumor_alpha * np.array([0, 1, 0])
+                           tumor_alpha * np.array([1, 0, 0])
     
     return overlay
 
 @st.cache_resource
-def load_segmentation_model():
+def load_pancreas_model():
     try:
         custom_objects = {
             'dice_coef': dice_coef,
@@ -167,82 +145,90 @@ def load_segmentation_model():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(script_dir, 'final_model.keras')
         
-        # Add debug prints
-        print(f"Attempting to load model from: {model_path}")
-        print(f"File exists: {os.path.exists(model_path)}")
-        if os.path.exists(model_path):
-            print(f"File size: {os.path.getsize(model_path)} bytes")
+        try:
+            model = load_model(model_path, custom_objects=custom_objects)
+            return model
+        except Exception as e:
+            st.error(f"Could not load pancreas model from {model_path}")
+            print(f"Full traceback: {traceback.format_exc()}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error loading pancreas model: {str(e)}")
+        print(f"Full traceback: {traceback.format_exc()}")
+        return None
+
+@st.cache_resource
+def load_liver_model():
+    try:
+        custom_objects = {
+            'dice_coef': dice_coef,
+            'dice_loss': dice_loss,
+            'iou_coef': iou_coef,
+            'pixel_accuracy': pixel_accuracy,
+            'hausdorff_distance': hausdorff_distance
+        }
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, 'liver_model.keras')
         
         try:
             model = load_model(model_path, custom_objects=custom_objects)
             return model
         except Exception as e:
-            st.error(f"Could not load model from {model_path}")
-            st.error(f"Detailed error: {str(e)}")
-            print(f"Full traceback: {traceback.format_exc()}")  # This will print the full error trace
+            st.error(f"Could not load liver model from {model_path}")
+            print(f"Full traceback: {traceback.format_exc()}")
             return None
             
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
+        st.error(f"Error loading liver model: {str(e)}")
         print(f"Full traceback: {traceback.format_exc()}")
         return None
-        
-def main():
-    st.title("Pancreas Segmentation Visualizer")
+
+def pancreas_page():
+    st.title("Pancreas Segmentation")
     
-    # File upload
     uploaded_file = st.file_uploader("Upload DICOM or NIfTI file", 
-                                     type=['dcm', 'nii', 'nii.gz'])
+                                   type=['dcm', 'nii', 'nii.gz'],
+                                   key="pancreas_uploader")
     
-    # Model loading
-    model = load_segmentation_model()
+    model = load_pancreas_model()
     if model is None:
-        st.error("Failed to load the segmentation model.")
+        st.error("Failed to load the pancreas segmentation model.")
         return
     
     if uploaded_file is not None:
-        # Load image
         volume_data = load_medical_image(uploaded_file)
         
         if volume_data is None:
             st.error("Failed to load the image.")
             return
         
-        # Perform segmentation for entire volume
-        st.write("Performing segmentation on the entire volume...")
+        st.write("Performing pancreas segmentation...")
         with st.spinner("Processing..."):
-            # Prepare input with correct shape
             preprocessed_volume = prepare_model_input(volume_data)
-            
-            # Predict
             predictions = model.predict(preprocessed_volume, verbose=0)
         
-        # Slice navigation
         st.write("### Segmentation Results")
         
-        # Add a slider to navigate through slices
         slice_idx = st.slider("Select Slice", 
-                               min_value=0, 
-                               max_value=volume_data.shape[0]-1, 
-                               value=volume_data.shape[0]//2)
+                            min_value=0, 
+                            max_value=volume_data.shape[0]-1, 
+                            value=volume_data.shape[0]//2,
+                            key="pancreas_slider")
         
-        # Get current slice data
         current_slice = volume_data[slice_idx]
         current_pred = predictions[slice_idx]
         
-        # Extract vessel and tumor masks
         vessel_mask = current_pred[..., 0]
         tumor_mask = current_pred[..., 1]
         
-        # Create overlay
         overlay_img = overlay_segmentation(current_slice, vessel_mask, tumor_mask)
         
-        # Display overlay
         st.image(overlay_img, 
-                 caption=f"Slice {slice_idx + 1}/{volume_data.shape[0]}: Segmentation Overlay", 
-                 use_container_width=True)
+                caption=f"Slice {slice_idx + 1}/{volume_data.shape[0]}: Segmentation Overlay", 
+                use_container_width=True)
         
-        # Optional: Show individual masks
         col1, col2 = st.columns(2)
         with col1:
             st.write("Vessel Segmentation")
@@ -251,8 +237,66 @@ def main():
             st.write("Tumor Segmentation")
             st.image(tumor_mask, caption="Tumor Mask", use_container_width=True)
 
-def main_app():
-    main()
+def liver_page():
+    st.title("Liver Segmentation")
+    
+    uploaded_file = st.file_uploader("Upload DICOM or NIfTI file", 
+                                   type=['dcm', 'nii', 'nii.gz'],
+                                   key="liver_uploader")
+    
+    model = load_liver_model()
+    if model is None:
+        st.error("Failed to load the liver segmentation model.")
+        return
+    
+    if uploaded_file is not None:
+        volume_data = load_medical_image(uploaded_file)
+        
+        if volume_data is None:
+            st.error("Failed to load the image.")
+            return
+        
+        st.write("Performing liver segmentation...")
+        with st.spinner("Processing..."):
+            preprocessed_volume = prepare_model_input(volume_data)
+            predictions = model.predict(preprocessed_volume, verbose=0)
+        
+        st.write("### Segmentation Results")
+        
+        slice_idx = st.slider("Select Slice", 
+                            min_value=0, 
+                            max_value=volume_data.shape[0]-1, 
+                            value=volume_data.shape[0]//2,
+                            key="liver_slider")
+        
+        current_slice = volume_data[slice_idx]
+        current_pred = predictions[slice_idx]
+        
+        liver_mask = current_pred[..., 0]
+        tumor_mask = current_pred[..., 1]
+        
+        overlay_img = overlay_segmentation_liver(current_slice, liver_mask, tumor_mask)
+        
+        st.image(overlay_img, 
+                caption=f"Slice {slice_idx + 1}/{volume_data.shape[0]}: Segmentation Overlay", 
+                use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("Liver Segmentation")
+            st.image(liver_mask, caption="Liver Mask", use_container_width=True)
+        with col2:
+            st.write("Tumor Segmentation")
+            st.image(tumor_mask, caption="Tumor Mask", use_container_width=True)
+
+def main():
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Select Page", ["Pancreas Segmentation", "Liver Segmentation"])
+    
+    if page == "Pancreas Segmentation":
+        pancreas_page()
+    else:
+        liver_page()
 
 if __name__ == "__main__":
-    main_app()
+    main()
