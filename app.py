@@ -105,6 +105,33 @@ def prepare_model_input(volume_data):
         preprocessed_slices.append(processed_slice)
     return np.array(preprocessed_slices)
 
+# Added missing overlay_segmentation function for pancreas page
+def overlay_segmentation(original_slice, vessel_mask, tumor_mask, vessel_alpha=0.4, tumor_alpha=0.4):
+    """Overlay function for vessel and tumor segmentation in pancreas"""
+    if vessel_mask.shape != original_slice.shape:
+        vessel_mask = resize(vessel_mask, original_slice.shape, mode='constant', preserve_range=True)
+    
+    if tumor_mask.shape != original_slice.shape:
+        tumor_mask = resize(tumor_mask, original_slice.shape, mode='constant', preserve_range=True)
+    
+    displayed_slice = normalize_slice(original_slice)
+    displayed_slice = np.stack([displayed_slice]*3, axis=-1)
+    
+    overlay = displayed_slice.copy().astype(np.float32)
+    
+    vessel_binary = vessel_mask > 0.5
+    tumor_binary = tumor_mask > 0.5
+    
+    # Blue for vessels
+    overlay[vessel_binary] = (1 - vessel_alpha) * overlay[vessel_binary] + \
+                            vessel_alpha * np.array([0, 0.5, 1])
+    
+    # Red for tumors
+    overlay[tumor_binary] = (1 - tumor_alpha) * overlay[tumor_binary] + \
+                           tumor_alpha * np.array([1, 0, 0])
+    
+    return overlay
+
 def overlay_segmentation_liver(original_slice, liver_mask, tumor_mask, liver_alpha=0.4, tumor_alpha=0.4):
     """Modified overlay function for liver and tumor segmentation"""
     if liver_mask.shape != original_slice.shape:
